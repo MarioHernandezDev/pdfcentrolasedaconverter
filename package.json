@@ -1,0 +1,17 @@
+{
+  "name": "centrolaseda-document-standardizer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "nuxt build",
+    "dev": "nuxt dev",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview"
+  },
+  "dependencies": {
+    "@lucide/vue": "^1.48.0",
+    "@nuxtjs/tailwindcss": "^6.14.0",
+    "nuxt": "^3.17.5",
+    "pdf-lib": "^1.17.1"
+  }
+}
