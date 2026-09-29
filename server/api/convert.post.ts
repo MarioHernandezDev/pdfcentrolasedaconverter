@@ -3,11 +3,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PDFDocument } from 'pdf-lib'
 
-// El logo vive en server/assets para que Nitro lo empaquete junto al
-// codigo del servidor. Leerlo desde public/ no es fiable en despliegues
-// serverless: ese directorio se sirve como estatico y puede no compartir
-// sistema de ficheros con la funcion en tiempo de ejecucion.
+// El logo y el sticker viven en server/assets para que Nitro los empaquete
+// junto al codigo del servidor. Leerlos desde public/ no es fiable en
+// despliegues serverless: ese directorio se sirve como estatico y puede no
+// compartir sistema de ficheros con la funcion en tiempo de ejecucion.
 const LOGO_ASSET_KEY = 'branding/logo.png'
+const STICKER_ASSET_KEY = 'branding/sticker.png'
 
 function badRequest(message: string) {
   return createError({ statusCode: 400, statusMessage: 'Bad Request', data: { message } })
@@ -56,27 +57,35 @@ export default defineEventHandler(async (event) => {
   const outputPath = join(tmpdir(), `output-${processId}.pdf`)
 
   try {
-    const [originalBytes, logoBytes] = await Promise.all([
+    const storage = useStorage('assets:server')
+    const [originalBytes, logoBytes, stickerBytes] = await Promise.all([
       readFile(inputPath),
-      useStorage('assets:server').getItemRaw<Buffer>(LOGO_ASSET_KEY)
+      storage.getItemRaw<Buffer>(LOGO_ASSET_KEY),
+      storage.getItemRaw<Buffer>(STICKER_ASSET_KEY)
     ])
 
-    if (!logoBytes) {
-      throw new Error(`No se encontro el asset del logo: ${LOGO_ASSET_KEY}`)
+    if (!logoBytes || !stickerBytes) {
+      throw new Error('No se encontraron los assets de marca (logo o sticker).')
     }
 
     const originalPdf = await PDFDocument.load(originalBytes)
 
     const mergedPdf = await PDFDocument.create()
+    const assets = await embedBrandAssets(mergedPdf, { logoBytes, stickerBytes })
+
     const [firstOriginalPage] = originalPdf.getPages()
     const pageWidth = firstOriginalPage?.getWidth() ?? 595.28
     const pageHeight = firstOriginalPage?.getHeight() ?? 841.89
 
     const coverPage = mergedPdf.addPage([pageWidth, pageHeight])
-    await drawCorporateCover(mergedPdf, coverPage, title, logoBytes)
+    drawCorporateCover(coverPage, title, assets)
 
     const copiedPages = await mergedPdf.copyPages(originalPdf, originalPdf.getPageIndices())
     copiedPages.forEach((page) => mergedPdf.addPage(page))
+
+    // Sello de marca (sticker + logo) en el pie de cada pagina del documento
+    // final, incluida la portada.
+    mergedPdf.getPages().forEach((page) => drawPageStamp(page, assets))
 
     const outputBytes = await mergedPdf.save()
     await writeFile(outputPath, outputBytes)

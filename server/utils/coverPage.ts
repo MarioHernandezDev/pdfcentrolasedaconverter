@@ -1,4 +1,4 @@
-import { type PDFDocument, type PDFFont, type PDFPage, type RGB, StandardFonts, rgb } from 'pdf-lib'
+import { type PDFDocument, type PDFFont, type PDFImage, type PDFPage, type RGB, StandardFonts, rgb } from 'pdf-lib'
 
 const COLOR_INK: RGB = rgb(0.1255, 0.1451, 0.1333)
 const COLOR_MUTED: RGB = rgb(0.4392, 0.4667, 0.4471)
@@ -8,6 +8,35 @@ const COLOR_ACCENT: RGB = rgb(0.3216, 0.4, 0.3569)
 const MARGIN = 64
 const LOGO_MAX_WIDTH = 120
 const SEPARATOR_WIDTH = 140
+
+const STAMP_MARGIN = 16
+const STAMP_STICKER_HEIGHT = 20
+const STAMP_LOGO_HEIGHT = 13
+const STAMP_GAP = 6
+
+export interface BrandAssets {
+  logoImage: PDFImage
+  stickerImage: PDFImage
+  titleFont: PDFFont
+  labelFont: PDFFont
+}
+
+// Embebe logo, sticker y tipografias una sola vez por documento. Las
+// imagenes resultantes son reutilizables en cuantas paginas haga falta sin
+// duplicar los datos binarios dentro del PDF.
+export async function embedBrandAssets(
+  pdfDoc: PDFDocument,
+  bytes: { logoBytes: Uint8Array; stickerBytes: Uint8Array }
+): Promise<BrandAssets> {
+  const [titleFont, labelFont, logoImage, stickerImage] = await Promise.all([
+    pdfDoc.embedFont(StandardFonts.HelveticaBold),
+    pdfDoc.embedFont(StandardFonts.Helvetica),
+    pdfDoc.embedPng(bytes.logoBytes),
+    pdfDoc.embedPng(bytes.stickerBytes)
+  ])
+
+  return { logoImage, stickerImage, titleFont, labelFont }
+}
 
 function wrapText(font: PDFFont, text: string, maxWidth: number, fontSize: number): string[] {
   const words = text.split(/\s+/).filter(Boolean)
@@ -69,20 +98,11 @@ function drawCenteredLine(page: PDFPage, y: number, pageWidth: number, width: nu
 }
 
 // Dibuja la portada corporativa (logo, titulo y pie institucional) sobre una
-// pagina en blanco ya anadida al documento. Autocontenido para poder
-// probarse y ajustarse sin tocar la orquestacion de conversion.
-export async function drawCorporateCover(
-  pdfDoc: PDFDocument,
-  page: PDFPage,
-  title: string,
-  logoBytes: Uint8Array
-): Promise<void> {
+// pagina en blanco ya anadida al documento.
+export function drawCorporateCover(page: PDFPage, title: string, assets: BrandAssets): void {
+  const { logoImage, titleFont, labelFont } = assets
   const pageWidth = page.getWidth()
   const pageHeight = page.getHeight()
-
-  const titleFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
-  const labelFont = await pdfDoc.embedFont(StandardFonts.Helvetica)
-  const logoImage = await pdfDoc.embedPng(logoBytes)
 
   const logoScale = Math.min(1, LOGO_MAX_WIDTH / logoImage.width)
   const logoWidth = logoImage.width * logoScale
@@ -136,5 +156,38 @@ export async function drawCorporateCover(
     y: MARGIN + 30,
     color: COLOR_ACCENT,
     pageWidth
+  })
+}
+
+// Sello discreto (sticker + logo) anclado a la esquina inferior izquierda de
+// cualquier pagina. Se aplica a la portada y a cada pagina del documento
+// original para que la identidad de marca quede visible en todo el PDF.
+export function drawPageStamp(page: PDFPage, assets: BrandAssets): void {
+  const { logoImage, stickerImage } = assets
+  const pageHeight = page.getHeight()
+
+  const stickerScale = STAMP_STICKER_HEIGHT / stickerImage.height
+  const stickerWidth = stickerImage.width * stickerScale
+
+  const logoScale = STAMP_LOGO_HEIGHT / logoImage.height
+  const logoWidth = logoImage.width * logoScale
+
+  // Si la pagina original es mas baja que el margen del sello (poco
+  // probable, pero posible en tamanos no estandar), se omite para no
+  // dibujar fuera de los limites de la pagina.
+  if (pageHeight < STAMP_MARGIN + Math.max(STAMP_STICKER_HEIGHT, STAMP_LOGO_HEIGHT)) return
+
+  page.drawImage(stickerImage, {
+    x: STAMP_MARGIN,
+    y: STAMP_MARGIN,
+    width: stickerWidth,
+    height: STAMP_STICKER_HEIGHT
+  })
+
+  page.drawImage(logoImage, {
+    x: STAMP_MARGIN + stickerWidth + STAMP_GAP,
+    y: STAMP_MARGIN,
+    width: logoWidth,
+    height: STAMP_LOGO_HEIGHT
   })
 }
