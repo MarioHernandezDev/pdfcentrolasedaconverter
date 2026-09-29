@@ -12,30 +12,49 @@ const SEPARATOR_WIDTH = 140
 const STAMP_MARGIN = 16
 const STAMP_STICKER_HEIGHT = 20
 const STAMP_LOGO_HEIGHT = 13
-const STAMP_GAP = 6
 
 export interface BrandAssets {
   logoImage: PDFImage
   stickerImage: PDFImage
+  backgroundImage: PDFImage
   titleFont: PDFFont
   labelFont: PDFFont
 }
 
-// Embebe logo, sticker y tipografias una sola vez por documento. Las
-// imagenes resultantes son reutilizables en cuantas paginas haga falta sin
-// duplicar los datos binarios dentro del PDF.
+// Embebe logo, sticker, fondo de portada y tipografias una sola vez por
+// documento. Las imagenes resultantes son reutilizables en cuantas paginas
+// haga falta sin duplicar los datos binarios dentro del PDF.
 export async function embedBrandAssets(
   pdfDoc: PDFDocument,
-  bytes: { logoBytes: Uint8Array; stickerBytes: Uint8Array }
+  bytes: { logoBytes: Uint8Array; stickerBytes: Uint8Array; backgroundBytes: Uint8Array }
 ): Promise<BrandAssets> {
-  const [titleFont, labelFont, logoImage, stickerImage] = await Promise.all([
+  const [titleFont, labelFont, logoImage, stickerImage, backgroundImage] = await Promise.all([
     pdfDoc.embedFont(StandardFonts.HelveticaBold),
     pdfDoc.embedFont(StandardFonts.Helvetica),
     pdfDoc.embedPng(bytes.logoBytes),
-    pdfDoc.embedPng(bytes.stickerBytes)
+    pdfDoc.embedPng(bytes.stickerBytes),
+    pdfDoc.embedPng(bytes.backgroundBytes)
   ])
 
-  return { logoImage, stickerImage, titleFont, labelFont }
+  return { logoImage, stickerImage, backgroundImage, titleFont, labelFont }
+}
+
+// Dibuja la imagen de fondo cubriendo toda la pagina (recortando el
+// sobrante fuera de los limites), manteniendo su proporcion original.
+function drawCoverBackground(page: PDFPage, backgroundImage: PDFImage): void {
+  const pageWidth = page.getWidth()
+  const pageHeight = page.getHeight()
+
+  const scale = Math.max(pageWidth / backgroundImage.width, pageHeight / backgroundImage.height)
+  const drawnWidth = backgroundImage.width * scale
+  const drawnHeight = backgroundImage.height * scale
+
+  page.drawImage(backgroundImage, {
+    x: (pageWidth - drawnWidth) / 2,
+    y: (pageHeight - drawnHeight) / 2,
+    width: drawnWidth,
+    height: drawnHeight
+  })
 }
 
 function wrapText(font: PDFFont, text: string, maxWidth: number, fontSize: number): string[] {
@@ -97,12 +116,15 @@ function drawCenteredLine(page: PDFPage, y: number, pageWidth: number, width: nu
   })
 }
 
-// Dibuja la portada corporativa (logo, titulo y pie institucional) sobre una
-// pagina en blanco ya anadida al documento.
+// Dibuja la portada corporativa (fondo, logo, titulo y pie institucional)
+// sobre una pagina en blanco ya anadida al documento. Solo se usa en la
+// portada: el resto de paginas del documento mantienen fondo blanco.
 export function drawCorporateCover(page: PDFPage, title: string, assets: BrandAssets): void {
-  const { logoImage, titleFont, labelFont } = assets
+  const { logoImage, backgroundImage, titleFont, labelFont } = assets
   const pageWidth = page.getWidth()
   const pageHeight = page.getHeight()
+
+  drawCoverBackground(page, backgroundImage)
 
   const logoScale = Math.min(1, LOGO_MAX_WIDTH / logoImage.width)
   const logoWidth = logoImage.width * logoScale
@@ -159,11 +181,12 @@ export function drawCorporateCover(page: PDFPage, title: string, assets: BrandAs
   })
 }
 
-// Sello discreto (sticker + logo) anclado a la esquina inferior izquierda de
-// cualquier pagina. Se aplica a la portada y a cada pagina del documento
+// Sello discreto: sticker en la esquina inferior izquierda, logo en la
+// inferior derecha. Se aplica a la portada y a cada pagina del documento
 // original para que la identidad de marca quede visible en todo el PDF.
 export function drawPageStamp(page: PDFPage, assets: BrandAssets): void {
   const { logoImage, stickerImage } = assets
+  const pageWidth = page.getWidth()
   const pageHeight = page.getHeight()
 
   const stickerScale = STAMP_STICKER_HEIGHT / stickerImage.height
@@ -185,7 +208,7 @@ export function drawPageStamp(page: PDFPage, assets: BrandAssets): void {
   })
 
   page.drawImage(logoImage, {
-    x: STAMP_MARGIN + stickerWidth + STAMP_GAP,
+    x: pageWidth - STAMP_MARGIN - logoWidth,
     y: STAMP_MARGIN,
     width: logoWidth,
     height: STAMP_LOGO_HEIGHT
